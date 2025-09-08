@@ -7,9 +7,6 @@
 
 import os, io, shutil, zipfile, tempfile
 from pathlib import Path
-import os
-import zipfile
-from pathlib import Path
 import cv2
 import pandas as pd
 import streamlit as st
@@ -27,7 +24,6 @@ PHOTO_SIZE = (300, 300)
 BARCODE_POS = (570, 465)
 BARCODE_SIZE = (390, 120)
 
-# Fine-tune these two to move the *name* relative to original point:
 NAME_OFFSET_X = -40   # negative = left
 NAME_OFFSET_Y = -20   # negative = up
 
@@ -60,7 +56,7 @@ def load_font_from_upload(upload, fallback_name: str, size: int):
             return ImageFont.truetype(io.BytesIO(upload.read()), size)
         except Exception:
             st.warning(f"⚠️ Failed to load uploaded font for {fallback_name}. Falling back to default.")
-    # Fallbacks – try common installed fonts; finally PIL default
+    # Fallbacks
     for candidate in [
         "Amiri-Regular.ttf", "Amiri.ttf", "NotoNaskhArabic-Regular.ttf",
         "HacenMaghreb.ttf", "HacenMaghreb (1).ttf",
@@ -73,33 +69,22 @@ def load_font_from_upload(upload, fallback_name: str, size: int):
     return ImageFont.load_default()
 
 def prepare_text(text: str) -> str:
-    """Arabic reshape + bidi for correct display."""
     if not text:
         return ""
     reshaped = arabic_reshaper.reshape(str(text))
     return get_display(reshaped)
 
-def draw_aligned_text(draw: ImageDraw.ImageDraw, xy, text, font, fill="black", anchor="rt"):
-    """Anchored text; multi-line supported line-by-line."""
+def draw_aligned_text(draw, xy, text, font, fill="black", anchor="rt"):
     if not text:
         return
-    lines = str(text).split("\n")
-    x, y = xy
-    for i, line in enumerate(lines):
-        if i > 0:
-            bbox = draw.textbbox((0, 0), line, font=font)
-            y += (bbox[3] - bbox[1])
-        draw.text((x, y), line, font=font, fill=fill, anchor=anchor)
+    draw.text(xy, str(text), font=font, fill=fill, anchor=anchor)
 
 def draw_bold_text(draw, xy, text, font, fill="black", anchor="rt"):
-    """Fake-bold by layering 1px offsets (PIL-friendly)."""
     for dx, dy in [(0,0), (1,0), (0,1), (1,1)]:
         draw_aligned_text(draw, (xy[0]+dx, xy[1]+dy), text, font, fill=fill, anchor=anchor)
-def extract_zip(zip_path, extract_to):
-    with zipfile.ZipFile(zip_path, 'r') as zf:
-        zf.extractall(extract_to)
+
 def find_photo_path(root_dir: str, requested: str):
-    """Search recursively inside extracted ZIP (handles 'pics/' subfolder)."""
+    """Search recursively for requested photo (ignores folder structure, case-insensitive)."""
     if not requested:
         return None
     requested = str(requested).strip().lower()
@@ -107,17 +92,11 @@ def find_photo_path(root_dir: str, requested: str):
 
     for dirpath, _, filenames in os.walk(root_dir):
         for fn in filenames:
-            fn_stem = Path(fn).stem.lower()
-            if fn_stem == req_stem:
+            if Path(fn).stem.lower() == req_stem:  # match name without extension
                 return os.path.join(dirpath, fn)
-
     return None
 
-
-
-
 def crop_face_and_shoulders(image_path: str):
-    """Optional: crop around the first detected face area."""
     img = cv2.imread(image_path)
     if img is None:
         return None
@@ -135,33 +114,17 @@ def crop_face_and_shoulders(image_path: str):
     return Image.fromarray(cv2.cvtColor(cropped, cv2.COLOR_BGR2RGB))
 
 def ensure_rar_support(custom_path: str | None = None):
-    """Enable rarfile support if a RAR is uploaded (Windows path or PATH)."""
     import rarfile
-    if custom_path:
-        if Path(custom_path).exists():
-            rarfile.UNRAR_TOOL = custom_path
-            return True
-        else:
-            st.warning("⚠️ Provided unrar.exe path does not exist. Falling back to autodetect.")
-    if os.name == "nt":
-        for p in [
-            r"C:\Program Files\WinRAR\UnRAR.exe",
-            r"C:\Program Files (x86)\WinRAR\UnRAR.exe",
-            r"C:\Windows\unrar.exe",
-            r"C:\Windows\System32\unrar.exe",
-        ]:
-            if Path(p).exists():
-                rarfile.UNRAR_TOOL = p
-                return True
-    return True  # assume in PATH or rarfile can handle
+    if custom_path and Path(custom_path).exists():
+        rarfile.UNRAR_TOOL = custom_path
+        return True
+    return True
 
 # ================== Main logic ====================
 if excel_file and photos_archive and template_file:
-    # Fonts: Arabic size 36 (smaller name to avoid photo overlap)
     font_ar = load_font_from_upload(font_ar_file, "Arabic", 36)
     font_en = load_font_from_upload(font_en_file, "English", 30)
 
-    # Read inputs
     try:
         df = pd.read_excel(excel_file)
     except Exception as e:
@@ -171,7 +134,7 @@ if excel_file and photos_archive and template_file:
     try:
         template = Image.open(template_file).convert("RGB")
     except Exception as e:
-        st.error(f"❌ Failed to read template image: {e}")
+        st.error(f"❌ Failed to read template: {e}")
         st.stop()
 
     tmpdir = tempfile.mkdtemp(prefix="idcards_")
@@ -190,11 +153,11 @@ if excel_file and photos_archive and template_file:
                 with rarfile.RarFile(archive_path, "r") as rf:
                     rf.extractall(tmpdir)
             else:
-                st.error("❌ RAR support not available. Provide a valid unrar.exe path or upload ZIP.")
+                st.error("❌ RAR not supported here.")
                 shutil.rmtree(tmpdir, ignore_errors=True)
                 st.stop()
         else:
-            st.error("❌ Unsupported archive type. Upload ZIP or RAR.")
+            st.error("❌ Unsupported archive type.")
             shutil.rmtree(tmpdir, ignore_errors=True)
             st.stop()
     except Exception as e:
@@ -202,95 +165,71 @@ if excel_file and photos_archive and template_file:
         shutil.rmtree(tmpdir, ignore_errors=True)
         st.stop()
 
-    output_cards: list[Image.Image] = []
-    progress = st.progress(0)
-    status = st.empty()
-
-    for idx, row in df.iterrows():
-        status.info(f"Processing {idx+1}/{len(df)} – {row.get('الاسم', '')}")
+    output_cards = []
+    for _, row in df.iterrows():
         card = template.copy()
         draw = ImageDraw.Draw(card)
 
-        # Prepare texts (Arabic shaping + bidi)
         name = prepare_text(str(row.get("الاسم", "")).strip())
         job  = prepare_text(str(row.get("الوظيفة", "")).strip())
-        num  = str(row.get("الرقم", "")).strip()               # الموظف/الرقم الوظيفي
-        national_id = str(row.get("الرقم القومي", "")).strip()  # للباركود
+        num  = str(row.get("الرقم", "")).strip()
+        national_id = str(row.get("الرقم القومي", "")).strip()
         photo_filename = str(row.get("الصورة", "")).strip()
 
-        # ---- TEXT PLACEMENT ----
-        base_name_xy = (915, 240)  # anchor reference from the design
-
-        # 1) Draw NAME (bold, nudged left/up)
+        # Text placement
+        base_name_xy = (915, 240)
         name_xy = (base_name_xy[0] + NAME_OFFSET_X, base_name_xy[1] + NAME_OFFSET_Y)
         draw_bold_text(draw, name_xy, name, font_ar, fill="black", anchor="rt")
 
-        # 2) Measure NAME height and add extra spacing (+10) so JOB sits lower
         name_bbox   = draw.textbbox((0, 0), name, font=font_ar)
-        name_height = (name_bbox[3] - name_bbox[1]) + 20   # ↑ increased spacing from 5 -> 10
-
-        # 3) Draw JOB directly under NAME with that spacing
+        name_height = (name_bbox[3] - name_bbox[1]) + 20
         job_xy = (name_xy[0], name_xy[1] + name_height)
         draw_aligned_text(draw, job_xy, job, font=font_ar, fill="black", anchor="rt")
 
-        # 4) Measure JOB height and add larger spacing (+15) so EMPLOYEE NUMBER sits even lower
         job_bbox   = draw.textbbox((0, 0), job, font=font_ar)
-        job_height = (job_bbox[3] - job_bbox[1]) + 25      # ↑ increased spacing from 5 -> 15
-
-        # 5) Draw EMPLOYEE NUMBER under JOB (aligned to the right)
-        job_id_label = prepare_text(f"الرقم الوظيفي: {num}")
+        job_height = (job_bbox[3] - job_bbox[1]) + 25
         id_xy = (name_xy[0], job_xy[1] + job_height)
+        job_id_label = prepare_text(f"الرقم الوظيفي: {num}")
         draw_aligned_text(draw, id_xy, job_id_label, font=font_ar, fill="black", anchor="rt")
 
-        # ---- PHOTO ----
+        # Photo
         photo_path = find_photo_path(tmpdir, photo_filename)
-        if photo_path and os.path.exists(photo_path):
+        if photo_path:
             try:
                 cropped = crop_face_and_shoulders(photo_path)
-                img = cropped if cropped is not None else Image.open(photo_path)
+                img = cropped if cropped else Image.open(photo_path)
                 img = img.convert("RGB").resize(PHOTO_SIZE)
                 card.paste(img, PHOTO_POS)
             except Exception as e:
-                st.warning(f"⚠️ Failed to place photo for '{row.get('الاسم', '')}': {e}")
+                st.warning(f"⚠️ Photo issue for {row.get('الاسم', '')}: {e}")
         else:
-            st.warning(f"📷 Photo not found for '{row.get('الاسم', '')}'. Requested: {photo_filename}")
+            st.warning(f"📷 Photo not found for {row.get('الاسم', '')} ({photo_filename})")
 
-        # ---- BARCODE (using national ID) ----
-        try:
-            if national_id:
-                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_barcode:
-                    out_noext = tmp_barcode.name[:-4]
-                barcode = Code128(national_id, writer=ImageWriter())
-                barcode_path = barcode.save(out_noext, {"write_text": False})
-                with Image.open(barcode_path) as bimg:
-                    bimg = bimg.convert("RGB").resize(BARCODE_SIZE)
-                    card.paste(bimg, BARCODE_POS)
-                for p in [out_noext + ".png", out_noext + ".svg"]:
-                    try: os.remove(p)
-                    except Exception: pass
-            else:
-                st.warning(f"🧾 National ID missing for '{row.get('الاسم', '')}'. Skipped barcode.")
-        except Exception as e:
-            st.warning(f"⚠️ Failed to generate barcode for '{row.get('الاسم', '')}': {e}")
+        # Barcode
+        if national_id:
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp_barcode:
+                out_noext = tmp_barcode.name[:-4]
+            barcode = Code128(national_id, writer=ImageWriter())
+            barcode_path = barcode.save(out_noext, {"write_text": False})
+            with Image.open(barcode_path) as bimg:
+                bimg = bimg.convert("RGB").resize(BARCODE_SIZE)
+                card.paste(bimg, BARCODE_POS)
+            for p in [out_noext + ".png", out_noext + ".svg"]:
+                try: os.remove(p)
+                except: pass
 
         output_cards.append(card)
-        progress.progress(int(((idx + 1) / max(len(df), 1)) * 100))
 
-    status.empty()
-
-    # ---- EXPORT PDF ----
+    # Export PDF
     if output_cards:
-        try:
-            pdf_path = os.path.join(tmpdir, "All_ID_Cards.pdf")
-            output_cards[0].save(pdf_path, save_all=True, append_images=output_cards[1:])
-            with open(pdf_path, "rb") as f:
-                st.download_button("⬇️ Download All ID Cards (PDF)", f, file_name="All_ID_Cards.pdf")
-            st.success(f"✅ Generated {len(output_cards)} cards")
-            st.image(output_cards[0], caption="Preview", width=320)
-        except Exception as e:
-            st.error(f"❌ Failed to write PDF: {e}")
+        pdf_path = os.path.join(tmpdir, "All_ID_Cards.pdf")
+        output_cards[0].save(pdf_path, save_all=True, append_images=output_cards[1:])
+        with open(pdf_path, "rb") as f:
+            st.download_button("⬇️ Download All ID Cards (PDF)", f, file_name="All_ID_Cards.pdf")
+        st.success(f"✅ Generated {len(output_cards)} cards")
+        st.image(output_cards[0], caption="Preview", width=320)
     else:
         st.warning("No cards generated.")
 
 else:
-    st.info("👆 Upload the three inputs to start: Excel, Photos archive, Template image.")
+    st.info("👆 Upload Excel, Photos archive, and Template to start.")
