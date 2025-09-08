@@ -104,9 +104,11 @@ def find_photo_path(root_dir: str, requested: str):
     for dirpath, _, filenames in os.walk(root_dir):
         for fn in filenames:
             fn_stem = Path(fn).stem.lower()
-            if fn_stem == req_stem:  # match name without caring about folders
+            if fn_stem == req_stem:
                 return os.path.join(dirpath, fn)
+
     return None
+
 
 
 
