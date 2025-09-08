@@ -1,0 +1,9 @@
+streamlit
+pandas
+pillow
+python-barcode
+opencv-python-headless
+openpyxl
+arabic-reshaper
+python-bidi
+rarfile
