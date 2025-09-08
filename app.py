@@ -7,7 +7,9 @@
 
 import os, io, shutil, zipfile, tempfile
 from pathlib import Path
-
+import os
+import zipfile
+from pathlib import Path
 import cv2
 import pandas as pd
 import streamlit as st
@@ -93,9 +95,11 @@ def draw_bold_text(draw, xy, text, font, fill="black", anchor="rt"):
     """Fake-bold by layering 1px offsets (PIL-friendly)."""
     for dx, dy in [(0,0), (1,0), (0,1), (1,1)]:
         draw_aligned_text(draw, (xy[0]+dx, xy[1]+dy), text, font, fill=fill, anchor=anchor)
-
+def extract_zip(zip_path, extract_to):
+    with zipfile.ZipFile(zip_path, 'r') as zf:
+        zf.extractall(extract_to)
 def find_photo_path(root_dir: str, requested: str):
-    """Find photo by stem match (case/ext-insensitive), search recursively."""
+    """Search recursively inside extracted ZIP (handles 'pics/' subfolder)."""
     if not requested:
         return None
     requested = str(requested).strip().lower()
